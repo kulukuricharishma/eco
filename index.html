@@ -1,0 +1,609 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>EcoScan</title>
+
+<link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css">
+<script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+<!-- Firebase (compat) -->
+<script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-auth-compat.js"></script>
+
+<script src="https://unpkg.com/leaflet.heat/dist/leaflet-heat.js"></script>
+
+<style>
+body { font-family: Arial; margin:0; background:#f4f7f6; }
+h2 { text-align:center; background:#1b8a5a; color:white; padding:10px; margin:0; }
+
+.tabs { display:flex; justify-content:center; gap:10px; background:#fff; padding:10px; }
+.tabs button { padding:10px; background:#1b8a5a; color:white; border:none; cursor:pointer; }
+
+.container { display:flex; gap:10px; padding:10px; }
+#mapWaste, #mapDrain { flex:2; height:65vh; min-width:300px; }
+
+.sidebar { flex:1; background:white; padding:10px; overflow:auto; }
+.hidden { display:none; }
+
+input, button { width:100%; margin:5px 0; padding:10px; box-sizing:border-box; }
+
+table { border-collapse: collapse; width:100%; }
+th, td { padding:6px; text-align:center; border:1px solid #ddd; }
+#analysisWaste, #analysisDrain {
+  padding: 10px;
+  background: #eef;
+  margin: 10px 0;
+  border-radius: 6px;
+}
+/* Add to your <style> */
+.tabContent { animation: fadeIn 0.3s; }
+@keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+
+.chart-container {
+  position: relative;
+  margin: auto;
+  height: 300px;
+  width: 300px;
+}
+</style>
+</head>
+
+<body>
+
+<h2>EcoScan</h2>
+
+<div class="tabs">
+  <button onclick="openTab('wasteTab')">🗑 Waste</button>
+  <button onclick="openTab('drainTab')">🌊 Drainage</button>
+  <button onclick="openTab('analysisTab')">Analysis</button>
+</div>
+
+<!-- LOGIN -->
+<div id="loginBox" style="padding:10px;">
+  <h3>Admin Login / Signup</h3>
+  <input id="email" placeholder="Email">
+  <input id="password" type="password" placeholder="Password">
+  <button onclick="login()">Login</button>
+  <button onclick="signup()">Sign Up</button>
+</div>
+
+<!-- WASTE -->
+<div id="wasteTab" class="tabContent">
+  <div class="container">
+    <div id="mapWaste"></div>
+<div class="sidebar hidden" id="sidebarWaste">
+
+  <input id="name" placeholder="Area Name">
+  <input id="searchBox" placeholder="Search location...">
+  <button onclick="searchLocation()">🔍 Search</button>
+
+  <input id="lat" placeholder="Latitude">
+  <input id="lng" placeholder="Longitude">
+  <input id="score" placeholder="Waste %">
+
+<button onclick="getGPSWaste()">Use My Location 📍</button>
+  <button onclick="addArea()">Add Waste</button>
+  <button onclick="logout()">Logout</button>
+
+  <!-- ✅ ADD HERE -->
+  <h4>📊 Waste Analysis</h4>
+  <div id="analysisWaste"></div>
+
+  <hr>
+  <h3>📋 Waste Areas</h3>
+  <table id="wasteTable"></table>
+</div>
+  </div>
+</div>
+
+<!-- DRAIN -->
+<div id="drainTab" class="tabContent hidden">
+  <div class="container">
+    <div id="mapDrain"></div>
+
+   <div class="sidebar hidden" id="sidebarDrain">
+
+  <input id="drainName" placeholder="Area Name">
+  <input id="drainLat" placeholder="Latitude">
+  <input id="drainLng" placeholder="Longitude">
+  <input id="drainage" placeholder="Drainage %">
+
+  <button onclick="getGPSDrain()">Use My Location 📍</button>
+  <button onclick="addDrain()">Add Drainage</button>
+  <button onclick="logout()">Logout</button>
+
+  <!-- ✅ ADD HERE -->
+  <h4>📊 Drainage Analysis</h4>
+  <div id="analysisDrain"></div>
+
+  <hr>
+  <h3>🌊 Drainage Areas</h3>
+  <table id="drainTable"></table>
+</div>
+  </div>
+</div>
+
+<!-- Analysis tab -->
+<div id="analysisTab" class="tabContent hidden" style="padding:10px;">
+  <h3>Combined Analysis</h3>
+  <div id="combinedAnalysis">Open a map and click an area to analyze.</div>
+
+  <h4>Waste Analysis</h4>
+  <canvas id="wasteChart" width="300" height="300"></canvas>
+
+  <h4>Drainage Analysis</h4>
+  <canvas id="drainChart" width="300" height="300"></canvas>
+</div>
+<script>
+/* FIREBASE */
+const firebaseConfig = {
+  apiKey: "AIzaSyDVKhUv14m9-brf_JMP9Lz0RrQu5h-_Z8Y",
+  authDomain: "ecoscan1-db45f.firebaseapp.com",
+  projectId: "ecoscan1-db45f",
+  storageBucket: "ecoscan1-db45f.firebasestorage.app",
+  messagingSenderId: "957764746452",
+  appId: "1:957764746452:web:fcc726e61232327ca60f41"
+};
+firebase.initializeApp(firebaseConfig);
+const db = firebase.firestore();
+const auth = firebase.auth();
+
+/* ELEMENT REFS */
+const loginBox = document.getElementById("loginBox");
+const sidebarWaste = document.getElementById("sidebarWaste");
+const sidebarDrain = document.getElementById("sidebarDrain");
+
+/* MAPS: separate instances for each tab */
+let mapWaste = L.map('mapWaste', { preferCanvas: true }).setView([16.5, 80.6], 12);
+let mapDrain = L.map('mapDrain', { preferCanvas: true }).setView([16.5, 80.6], 12);
+navigator.geolocation.getCurrentPosition(pos => {
+  mapWaste.setView([pos.coords.latitude, pos.coords.longitude], 13);
+  mapDrain.setView([pos.coords.latitude, pos.coords.longitude], 13);
+});
+let wasteChart = null;
+let drainChart = null;
+
+
+/* Tile layers (separate instances to avoid cross-map issues) */
+let normalLayerWaste = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png');
+let normalLayerDrain = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png');
+
+let satelliteLayerWaste = L.tileLayer('https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png');
+let satelliteLayerDrain = L.tileLayer('https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png');
+
+normalLayerWaste.addTo(mapWaste);
+normalLayerDrain.addTo(mapDrain);
+
+/* Marker storage */
+let wasteMarkers = {};
+let drainMarkers = {};
+let wasteCache = [];
+let drainCache = [];
+/* Utility: which tab is active */
+function activeTabId(){
+  const tabs = document.querySelectorAll(".tabContent");
+  for(let t of tabs){
+    if(!t.classList.contains("hidden")) return t.id;
+  }
+  return null;
+}
+
+/* LAT/LNG input helper: target indicates which tab ('waste' or 'drain') */
+function latInput(lat, lon, nameText, target='waste'){
+  if(target === 'waste'){
+    document.getElementById("lat").value = lat;
+    document.getElementById("lng").value = lon;
+    document.getElementById("name").value = nameText;
+    mapWaste.setView([lat, lon], 14);
+    analyzeArea(lat, lon, 'waste');
+  } else {
+    document.getElementById("drainLat").value = lat;
+    document.getElementById("drainLng").value = lon;
+    document.getElementById("drainName").value = nameText;
+    mapDrain.setView([lat, lon], 14);
+    analyzeArea(lat, lon, 'drain');
+  }
+}
+
+/* SEARCH */
+async function searchLocation(){
+  let q = document.getElementById("searchBox").value;
+  if(!q) return;
+  try{
+    let res = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(q)}`);
+    let data = await res.json();
+    if(data && data.length){
+      // choose active tab to place result
+      let target = activeTabId() === 'drainTab' ? 'drain' : 'waste';
+      latInput(parseFloat(data[0].lat), parseFloat(data[0].lon), data[0].display_name, target);
+    }
+  }catch(e){
+    console.error("Search error", e);
+  }
+}
+
+/* GPS */
+function getGPSWaste(){
+  navigator.geolocation.getCurrentPosition(pos=>{
+    latInput(pos.coords.latitude, pos.coords.longitude, "My Location", 'waste');
+  });
+}
+
+function getGPSDrain(){
+  navigator.geolocation.getCurrentPosition(pos=>{
+    latInput(pos.coords.latitude, pos.coords.longitude, "My Location", 'drain');
+  });
+}
+/* MAP CLICK: attach separate handlers for each map */
+mapWaste.on("click", async e=>{
+  if(!auth.currentUser) return;
+  let lat = e.latlng.lat;
+  let lon = e.latlng.lng;
+  try{
+    let res = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lon}`);
+    let data = await res.json();
+    latInput(lat, lon, data.display_name || "Unknown Area", 'waste');
+  }catch(e){
+    latInput(lat, lon, "Unknown Area", 'waste');
+  }
+});
+
+mapDrain.on("click", async e=>{
+  if(!auth.currentUser) return;
+  let lat = e.latlng.lat;
+  let lon = e.latlng.lng;
+  try{
+    let res = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lon}`);
+    let data = await res.json();
+    latInput(lat, lon, data.display_name || "Unknown Area", 'drain');
+  }catch(e){
+    latInput(lat, lon, "Unknown Area", 'drain');
+  }
+});
+function getDistance(lat1, lon1, lat2, lon2) {
+  const R = 6371; // Earth radius in km
+  const dLat = (lat2 - lat1) * Math.PI / 180;
+  const dLon = (lon2 - lon1) * Math.PI / 180;
+
+  const a =
+    Math.sin(dLat/2) * Math.sin(dLat/2) +
+    Math.cos(lat1 * Math.PI/180) * Math.cos(lat2 * Math.PI/180) *
+    Math.sin(dLon/2) * Math.sin(dLon/2);
+
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+
+  return R * c; // distance in km
+}
+
+/* ANALYSIS: counts nearby points within a simple bounding box radius */
+function analyzeArea(lat, lng, target='waste'){
+  let wH=0, wM=0, wL=0;
+  let dH=0, dM=0, dL=0;
+  let radiusKm = 2; 
+
+  wasteCache.forEach(a => {
+    let dist = getDistance(lat, lng, a.lat, a.lng);
+    if(dist < radiusKm){
+      if(a.score > 40) wH++;
+      else if(a.score > 20) wM++;
+      else wL++;
+    }
+  });
+
+  drainCache.forEach(d => {
+    let dist = getDistance(lat, lng, d.lat, d.lng);
+    if(dist < radiusKm){
+      if(d.drainage > 50) dH++;
+      else if(d.drainage > 25) dM++;
+      else dL++;
+    }
+  });
+
+  const analysisContainer = document.getElementById("combinedAnalysis");
+  
+  if((wH + wM + wL + dH + dM + dL) === 0){
+    analysisContainer.innerHTML = "⚠️ No data points within 2km of this location.";
+    if(wasteChart) wasteChart.destroy();
+    if(drainChart) drainChart.destroy();
+    return;
+  }
+
+  analysisContainer.innerHTML = `
+    <div style="display:grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top:10px;">
+      <div style="border-left: 4px solid #1b8a5a; padding-left:10px;">
+        <strong>Waste:</strong> ${wH+wM+wL} total <br>
+        🔴 ${wH} | 🟠 ${wM} | 🟢 ${wL}
+      </div>
+      <div style="border-left: 4px solid #1b8a5a; padding-left:10px;">
+        <strong>Drainage:</strong> ${dH+dM+dL} total <br>
+        🔴 ${dH} | 🟠 ${dM} | 🟢 ${dL}
+      </div>
+    </div>
+  `;
+
+  updateCharts(wH, wM, wL, dH, dM, dL);
+}
+
+function updateCharts(wH, wM, wL, dH, dM, dL) {
+  const commonOptions = {
+    responsive: true,
+    maintainAspectRatio: false,
+    plugins: { legend: { position: 'bottom' } }
+  };
+
+  if(wasteChart) wasteChart.destroy();
+  wasteChart = new Chart(document.getElementById('wasteChart'), {
+    type: 'doughnut', // Doughnut looks a bit more modern
+    data: {
+      labels: ['High', 'Medium', 'Low'],
+      datasets: [{ data: [wH, wM, wL], backgroundColor: ['#ef4444', '#f59e0b', '#10b981'] }]
+    },
+    options: commonOptions
+  });
+
+  if(drainChart) drainChart.destroy();
+  drainChart = new Chart(document.getElementById('drainChart'), {
+    type: 'doughnut',
+    data: {
+      labels: ['Blocked', 'Slow', 'Good'],
+      datasets: [{ data: [dH, dM, dL], backgroundColor: ['#7f1d1d', '#fbbf24', '#34d399'] }]
+    },
+    options: commonOptions
+  });
+}
+/* TABLES: render snapshot results */
+function updateWasteTable(snapshot){
+  let table = document.getElementById("wasteTable");
+  let rows = `<tr><th>Name</th><th>Score</th><th>Level</th><th>Action</th></tr>`;
+
+  snapshot.forEach(doc=>{
+    let a = doc.data();
+    let level = a.score > 40 ? "High" : a.score > 20 ? "Medium" : "Low";
+    let color = level === "High" ? "red" : level === "Medium" ? "orange" : "green";
+
+    rows += `<tr>
+      <td>${escapeHtml(a.name || '')}</td>
+      <td>${escapeHtml((a.score || 0) + '%')}</td>
+      <td style="color:${color}">${level}</td>
+      <td><button onclick="deleteArea('${doc.id}')">Delete</button></td>
+    </tr>`;
+  });
+
+  table.innerHTML = rows;
+  // update markers on mapWaste
+  refreshWasteMarkers(snapshot);
+}
+
+function updateDrainTable(snapshot){
+  let table = document.getElementById("drainTable");
+  let rows = `<tr><th>Name</th><th>Drainage</th><th>Status</th><th>Action</th></tr>`;
+
+  snapshot.forEach(doc=>{
+    let d = doc.data();
+    let status = d.drainage > 50 ? "Blocked" : d.drainage > 25 ? "Slow" : "Good";
+    let color = status === "Blocked" ? "red" : status === "Slow" ? "orange" : "green";
+
+    rows += `<tr>
+      <td>${escapeHtml(d.name || '')}</td>
+      <td>${escapeHtml((d.drainage || 0) + '%')}</td>
+      <td style="color:${color}">${status}</td>
+      <td><button onclick="deleteDrain('${doc.id}')">Delete</button></td>
+    </tr>`;
+  });
+
+  table.innerHTML = rows;
+  // update markers on mapDrain
+  refreshDrainMarkers(snapshot);
+}
+
+/* REALTIME listeners */
+function loadTables(){
+
+  db.collection("waste").onSnapshot(snap => {
+    wasteCache = snap.docs.map(d => d.data()); // ✅ cache
+    updateWasteTable(snap);
+  });
+
+  db.collection("drainage").onSnapshot(snap => {
+    drainCache = snap.docs.map(d => d.data()); // ✅ cache
+    updateDrainTable(snap);
+  });
+
+}
+/* CRUD */
+function addArea(){
+if(!auth.currentUser) return alert("Login required");
+  // basic validation
+  const n = document.getElementById("name").value || '';
+  const la = parseFloat(document.getElementById("lat").value);
+  const ln = parseFloat(document.getElementById("lng").value);
+  const sc = parseFloat(document.getElementById("score").value);
+if(sc < 0 || sc > 100){
+  return alert("Waste % must be between 0–100");
+}
+
+  if(!n || isNaN(la) || isNaN(ln) || isNaN(sc)) return alert("Please provide valid name, lat, lng and score.");
+
+  db.collection("waste").add({
+    name: n,
+    lat: la,
+    lng: ln,
+    score: sc
+  }).then(()=> {
+    // clear inputs
+    document.getElementById("name").value = '';
+    document.getElementById("score").value = '';
+document.getElementById("lat").value = '';
+document.getElementById("lng").value = '';
+  }).catch(err=>console.error("Add waste error", err));
+}
+
+function addDrain(){
+if(!auth.currentUser) return alert("Login required");
+  const n = document.getElementById("drainName").value || '';
+  const la = parseFloat(document.getElementById("drainLat").value);
+  const ln = parseFloat(document.getElementById("drainLng").value);
+  const dr = parseFloat(document.getElementById("drainage").value);
+if(dr < 0 || dr > 100){
+  return alert("Drainage % must be between 0–100");
+}
+
+  if(!n || isNaN(la) || isNaN(ln) || isNaN(dr)) return alert("Please provide valid name, lat, lng and drainage.");
+
+  db.collection("drainage").add({
+    name: n,
+    lat: la,
+    lng: ln,
+    drainage: dr
+  }).then(()=>{
+    document.getElementById("drainName").value = '';
+    document.getElementById("drainage").value = '';
+document.getElementById("drainLat").value = '';
+document.getElementById("drainLng").value = '';
+  }).catch(err=>console.error("Add drain error", err));
+}
+
+function deleteArea(id){
+  if(!auth.currentUser) return alert("Login required"); // ✅
+  db.collection("waste").doc(id).delete().catch(e=>console.error(e));
+}
+
+function deleteDrain(id){
+  if(!auth.currentUser) return alert("Login required"); // ✅
+  db.collection("drainage").doc(id).delete().catch(e=>console.error(e));
+}
+/* AUTH */
+auth.onAuthStateChanged(user=>{
+  if(user){
+    loginBox.classList.add("hidden");
+    sidebarWaste.classList.remove("hidden");
+    sidebarDrain.classList.remove("hidden");
+    loadTables();
+  } else {
+    loginBox.classList.remove("hidden");
+    sidebarWaste.classList.add("hidden");
+    sidebarDrain.classList.add("hidden");
+  }
+});
+
+function login(){ auth.signInWithEmailAndPassword(document.getElementById("email").value, document.getElementById("password").value).catch(e=>alert(e.message)); }
+function signup(){ auth.createUserWithEmailAndPassword(document.getElementById("email").value, document.getElementById("password").value).catch(e=>alert(e.message)); }
+function logout(){ auth.signOut(); }
+
+/* TAB switching: ensure correct map sizing and layers */
+function openTab(id){
+  document.querySelectorAll(".tabContent").forEach(t=>t.classList.add("hidden"));
+  document.getElementById(id).classList.remove("hidden");
+
+  if(id === "drainTab"){
+    // show satellite on drain map, normal on waste map (waste may be hidden)
+    if(mapDrain.hasLayer(normalLayerDrain)) mapDrain.removeLayer(normalLayerDrain);
+    if(!mapDrain.hasLayer(satelliteLayerDrain)) satelliteLayerDrain.addTo(mapDrain);
+    // ensure waste map has normal layer when shown later
+    if(mapWaste.hasLayer(satelliteLayerWaste)) mapWaste.removeLayer(satelliteLayerWaste);
+    if(!mapWaste.hasLayer(normalLayerWaste)) normalLayerWaste.addTo(mapWaste);
+
+    setTimeout(()=>mapDrain.invalidateSize(), 200);
+  } else if(id === "wasteTab"){
+    if(mapWaste.hasLayer(satelliteLayerWaste)) mapWaste.removeLayer(satelliteLayerWaste);
+    if(!mapWaste.hasLayer(normalLayerWaste)) normalLayerWaste.addTo(mapWaste);
+
+    if(mapDrain.hasLayer(normalLayerDrain)) mapDrain.removeLayer(normalLayerDrain);
+    if(!mapDrain.hasLayer(satelliteLayerDrain)) satelliteLayerDrain.addTo(mapDrain);
+
+    setTimeout(()=>mapWaste.invalidateSize(), 200);
+  } else {
+    // analysis tab
+    setTimeout(()=>{ mapWaste.invalidateSize(); mapDrain.invalidateSize(); }, 200);
+  }
+}
+
+/* initial tab */
+openTab("wasteTab");
+
+/* Helpers: refresh markers from snapshots */
+function refreshWasteMarkers(snapshot){
+  // remove markers not in snapshot
+  const ids = new Set();
+  snapshot.forEach(doc => ids.add(doc.id));
+
+  for(const id in wasteMarkers){
+    if(!ids.has(id)){
+      mapWaste.removeLayer(wasteMarkers[id]);
+      delete wasteMarkers[id];
+    }
+  }
+
+  snapshot.forEach(doc=>{
+    const d = doc.data();
+    if(!d || typeof d.lat === 'undefined' || typeof d.lng === 'undefined') return;
+    const id = doc.id;
+    const latlng = [d.lat, d.lng];
+    const level = d.score > 40 ? 'red' : d.score > 20 ? 'orange' : 'green';
+
+    if(wasteMarkers[id]){
+      wasteMarkers[id].setLatLng(latlng);
+    } else {
+      const m = L.circleMarker(latlng, { radius:8, color: level }).addTo(mapWaste);
+      m.bindPopup(`<strong>${escapeHtml(d.name || '')}</strong><br>Score: ${escapeHtml(d.score + '%')}`);
+      wasteMarkers[id] = m;
+    }
+  });
+}
+
+function refreshDrainMarkers(snapshot){
+  const ids = new Set();
+  snapshot.forEach(doc => ids.add(doc.id));
+
+  for(const id in drainMarkers){
+    if(!ids.has(id)){
+      mapDrain.removeLayer(drainMarkers[id]);
+      delete drainMarkers[id];
+    }
+  }
+
+  snapshot.forEach(doc=>{
+    const d = doc.data();
+    if(!d || typeof d.lat === 'undefined' || typeof d.lng === 'undefined') return;
+    const id = doc.id;
+    const latlng = [d.lat, d.lng];
+    const status = d.drainage > 50 ? 'red' : d.drainage > 25 ? 'orange' : 'green';
+
+    if(drainMarkers[id]){
+      drainMarkers[id].setLatLng(latlng);
+    } else {
+      const m = L.circleMarker(latlng, { radius:8, color: status }).addTo(mapDrain);
+      m.bindPopup(`<strong>${escapeHtml(d.name || '')}</strong><br>Drainage: ${escapeHtml(d.drainage + '%')}`);
+      drainMarkers[id] = m;
+    }
+  });
+}
+
+/* small utility to escape HTML in table cells/popups */
+function escapeHtml(str){
+  if(typeof str !== 'string') return str;
+  return str.replace(/[&<>"'`=\/]/g, function(s) {
+    return ({
+      '&': '&amp;',
+      '<': '&lt;',
+      '>': '&gt;',
+      '"': '&quot;',
+      "'": '&#39;',
+      '/': '&#x2F;',
+      '`': '&#x60;',
+      '=': '&#x3D;'
+    })[s];
+  });
+}
+
+/* initial empty tables */
+document.getElementById("wasteTable").innerHTML = `<tr><th>Name</th><th>Score</th><th>Level</th><th>Action</th></tr>`;
+document.getElementById("drainTable").innerHTML = `<tr><th>Name</th><th>Drainage</th><th>Status</th><th>Action</th></tr>`;
+
+</script>
+
+</body>
+</html>
