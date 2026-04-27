@@ -59,5 +59,9 @@ Go to Firebase Console → Create Project → Enable:
 - Authentication (Email/Password)
 - Firestore Database
 Then paste your Firebase configuration inside `firebase.js`
+
+## 🚀 Live Demo
+https://kulukuricharishma.github.io/eco/
+
 ## 👨‍💻 Developed By
 - @kulukuricharishma
